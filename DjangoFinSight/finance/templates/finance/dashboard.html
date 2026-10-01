@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FinSight · Dashboard Pengeluaran</title>
+  <!-- CDN untuk pengembangan. Untuk produksi: build Tailwind sendiri & hosting Chart.js lokal. -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable:hover { background-color: #f1f5f9; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+{% if error %}
+  <main class="max-w-2xl mx-auto mt-24 p-6 bg-white rounded-xl shadow border border-red-200">
+    <h1 class="text-lg font-semibold text-red-600">Dataset belum bisa dibaca</h1>
+    <p class="mt-2 text-sm text-slate-600">{{ error }}</p>
+    <p class="mt-2 text-sm text-slate-500">Cek <code class="bg-slate-100 px-1 rounded">DATASET_PATH</code> di <code class="bg-slate-100 px-1 rounded">settings.py</code>.</p>
+  </main>
+{% else %}
+
+<header class="bg-white border-b border-slate-200 sticky top-0 z-10">
+  <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h1 class="text-xl font-bold tracking-tight">FinSight</h1>
+      <p class="text-xs text-slate-500">{{ selected_label }} · {{ period_text }}</p>
+    </div>
+    <form method="get" class="flex items-center gap-2">
+      <label for="bulan" class="text-sm text-slate-600">Periode</label>
+      <select id="bulan" name="bulan" onchange="this.form.submit()"
+              class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+        <option value="">Semua bulan</option>
+        {% for o in month_options %}
+          <option value="{{ o.value }}" {% if o.value == selected %}selected{% endif %}>{{ o.label }}</option>
+        {% endfor %}
+      </select>
+    </form>
+  </div>
+</header>
+
+<main class="max-w-7xl mx-auto px-4 py-6 space-y-6">
+
+  <!-- KPI -->
+  <section class="grid grid-cols-2 lg:grid-cols-5 gap-3">
+    <div class="col-span-2 lg:col-span-1 bg-indigo-600 text-white rounded-xl p-4 shadow-sm">
+      <p class="text-xs uppercase tracking-wide text-indigo-200">Total pengeluaran</p>
+      <p class="mt-1 text-2xl font-bold">{{ kpi.total }}</p>
+      {% if kpi.delta %}
+        <p class="mt-1 text-xs {% if kpi.delta.up %}text-red-200{% else %}text-emerald-200{% endif %}">{{ kpi.delta.text }}</p>
+      {% endif %}
+    </div>
+    <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-200">
+      <p class="text-xs uppercase tracking-wide text-slate-500">Rata-rata / hari</p>
+      <p class="mt-1 text-xl font-semibold">{{ kpi.avg_day }}</p>
+      <p class="mt-1 text-xs text-slate-400">median {{ kpi.median_day }}</p>
+    </div>
+    <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-200">
+      <p class="text-xs uppercase tracking-wide text-slate-500">Transaksi</p>
+      <p class="mt-1 text-xl font-semibold">{{ kpi.n_tx }}</p>
+      <p class="mt-1 text-xs text-slate-400">rata-rata {{ kpi.avg_tx }}</p>
+    </div>
+    <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-200">
+      <p class="text-xs uppercase tracking-wide text-slate-500">Hari hemat</p>
+      <p class="mt-1 text-xl font-semibold">{{ kpi.zero_pct }}</p>
+      <p class="mt-1 text-xs text-slate-400">{{ kpi.zero_days }}</p>
+    </div>
+    <div class="bg-white rounded-xl p-4 shadow-sm border border-slate-200 col-span-2 lg:col-span-1">
+      <p class="text-xs uppercase tracking-wide text-slate-500">Periode</p>
+      <p class="mt-1 text-base font-semibold">{{ selected_label }}</p>
+      <p class="mt-1 text-xs text-slate-400">{{ period_text }}</p>
+    </div>
+  </section>
+
+  <!-- Sorotan -->
+  {% if highlights %}
+  <section>
+    <h2 class="text-sm font-semibold text-slate-600 mb-2">Sorotan</h2>
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+      {% for h in highlights %}
+        <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
+          <p class="text-xs text-slate-500">{{ h.title }}</p>
+          <p class="mt-1 text-lg font-semibold text-slate-800">{{ h.value }}</p>
+          <p class="mt-1 text-xs text-slate-400 leading-snug">{{ h.note }}</p>
+        </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <!-- Grafik -->
+  <section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+    <div class="lg:col-span-2 bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
+      <h2 class="text-sm font-semibold text-slate-600">Tren bulanan</h2>
+      <p class="text-xs text-slate-400 mb-2">Klik batang untuk melihat bulan tersebut</p>
+      <div class="h-64"><canvas id="chartMonthly"></canvas></div>
+    </div>
+
+    <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
+      <div class="flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-slate-600">Kategori</h2>
+        <div class="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs">
+          <button id="btnNominal" class="px-2.5 py-1 bg-indigo-600 text-white">Nominal</button>
+          <button id="btnFreq" class="px-2.5 py-1 bg-white text-slate-600">Frekuensi</button>
+        </div>
+      </div>
+      <div class="h-64 mt-2"><canvas id="chartCategory"></canvas></div>
+    </div>
+
+    <div class="lg:col-span-2 bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
+      <h2 class="text-sm font-semibold text-slate-600 mb-2">Tren harian</h2>
+      <div class="h-56"><canvas id="chartDaily"></canvas></div>
+    </div>
+
+    <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
+      <h2 class="text-sm font-semibold text-slate-600 mb-2">Rata-rata per hari dalam seminggu</h2>
+      <div class="h-56"><canvas id="chartWeekday"></canvas></div>
+    </div>
+
+    <div class="lg:col-span-3 bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
+      <h2 class="text-sm font-semibold text-slate-600 mb-2">Item paling boros (total nominal)</h2>
+      <div class="h-64"><canvas id="chartItems"></canvas></div>
+    </div>
+  </section>
+
+  <!-- Tabel data -->
+  <section class="bg-white rounded-xl border border-slate-200 shadow-sm">
+    <div class="p-4 flex flex-wrap items-center gap-3 border-b border-slate-200">
+      <h2 class="text-sm font-semibold text-slate-600 mr-auto">Data transaksi</h2>
+      <input id="search" type="search" placeholder="Cari item…"
+             class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm w-44 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+      <select id="filterCat" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+        <option value="">Semua kategori</option>
+        {% for c in category_options %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+      </select>
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+          <tr>
+            <th class="sortable px-4 py-2" data-key="d">Tanggal <span class="arrow"></span></th>
+            <th class="sortable px-4 py-2" data-key="i">Item <span class="arrow"></span></th>
+            <th class="sortable px-4 py-2" data-key="c">Kategori <span class="arrow"></span></th>
+            <th class="sortable px-4 py-2 text-right" data-key="a">Nominal <span class="arrow"></span></th>
+          </tr>
+        </thead>
+        <tbody id="tbody" class="divide-y divide-slate-100"></tbody>
+      </table>
+    </div>
+
+    <div class="p-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 text-sm text-slate-600">
+      <div id="tableSummary"></div>
+      <div class="flex items-center gap-2">
+        <button id="prev" class="px-3 py-1 rounded-lg border border-slate-300 hover:bg-slate-50 disabled:opacity-40">‹ Sebelumnya</button>
+        <span id="pageInfo" class="text-xs text-slate-500"></span>
+        <button id="next" class="px-3 py-1 rounded-lg border border-slate-300 hover:bg-slate-50 disabled:opacity-40">Berikutnya ›</button>
+      </div>
+    </div>
+  </section>
+
+  <footer class="text-center text-xs text-slate-400 pb-6">FinSight · data dibaca dari master.csv</footer>
+</main>
+
+{{ chart_data|json_script:"chart-data" }}
+{{ rows|json_script:"rows-data" }}
+
+<script>
+(function () {
+  const chartData = JSON.parse(document.getElementById('chart-data').textContent);
+  const rows = JSON.parse(document.getElementById('rows-data').textContent);
+
+  const PALETTE = ['#6366f1', '#f59e0b', '#10b981', '#ef4444', '#06b6d4', '#8b5cf6', '#ec4899', '#84cc16', '#f97316', '#14b8a6'];
+  const fmtRp = n => 'Rp' + new Intl.NumberFormat('id-ID').format(Math.round(n));
+  const fmtAxis = n => n >= 1e6 ? (n / 1e6).toLocaleString('id-ID', { maximumFractionDigits: 1 }) + ' jt'
+                     : n >= 1e3 ? (n / 1e3).toLocaleString('id-ID', { maximumFractionDigits: 0 }) + 'k' : n;
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  const catColor = {};
+  chartData.categories.labels.forEach((c, i) => { catColor[c] = PALETTE[i % PALETTE.length]; });
+  catColor['Tanpa kategori'] = '#94a3b8';
+
+  const moneyTooltip = { callbacks: { label: ctx => ' ' + fmtRp(ctx.parsed.y ?? ctx.parsed.x ?? ctx.parsed) } };
+  const moneyAxis = { ticks: { callback: v => fmtAxis(v) }, grid: { color: '#f1f5f9' } };
+
+  // ---- tren bulanan (klik batang = pindah bulan) ----
+  const m = chartData.monthly;
+  new Chart(document.getElementById('chartMonthly'), {
+    type: 'bar',
+    data: {
+      labels: m.labels,
+      datasets: [{
+        data: m.values,
+        backgroundColor: m.keys.map(k => (!chartData.selected || k === chartData.selected) ? '#6366f1' : '#c7d2fe'),
+        borderRadius: 6
+      }]
+    },
+    options: {
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: moneyTooltip },
+      scales: { y: moneyAxis, x: { grid: { display: false } } },
+      onClick: (evt, els) => { if (els.length) window.location = '?bulan=' + m.keys[els[0].index]; },
+      onHover: (evt, els) => { evt.native.target.style.cursor = els.length ? 'pointer' : 'default'; }
+    }
+  });
+
+  // ---- kategori: donat, toggle nominal / frekuensi ----
+  const cats = chartData.categories;
+  const catChart = new Chart(document.getElementById('chartCategory'), {
+    type: 'doughnut',
+    data: {
+      labels: cats.labels,
+      datasets: [{ data: cats.total, backgroundColor: cats.labels.map(c => catColor[c]), borderWidth: 2, borderColor: '#fff' }]
+    },
+    options: {
+      maintainAspectRatio: false, cutout: '58%',
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } },
+        tooltip: { callbacks: { label: ctx => {
+          const sum = ctx.dataset.data.reduce((a, b) => a + b, 0);
+          const pct = sum ? (ctx.parsed / sum * 100).toFixed(1) : 0;
+          const val = mode === 'nominal' ? fmtRp(ctx.parsed) : ctx.parsed + ' transaksi';
+          return ' ' + val + ' (' + pct + '%)';
+        } } }
+      }
+    }
+  });
+  let mode = 'nominal';
+  const btnN = document.getElementById('btnNominal'), btnF = document.getElementById('btnFreq');
+  function setMode(next) {
+    mode = next;
+    catChart.data.datasets[0].data = next === 'nominal' ? cats.total : cats.freq;
+    catChart.update();
+    const on = ['bg-indigo-600', 'text-white'], off = ['bg-white', 'text-slate-600'];
+    btnN.classList.remove(...on, ...off); btnF.classList.remove(...on, ...off);
+    btnN.classList.add(...(next === 'nominal' ? on : off));
+    btnF.classList.add(...(next === 'freq' ? on : off));
+  }
+  btnN.onclick = () => setMode('nominal');
+  btnF.onclick = () => setMode('freq');
+
+  // ---- tren harian ----
+  new Chart(document.getElementById('chartDaily'), {
+    type: 'line',
+    data: {
+      labels: chartData.daily.labels,
+      datasets: [{ data: chartData.daily.values, borderColor: '#6366f1', backgroundColor: 'rgba(99,102,241,.12)',
+                   fill: true, tension: 0.25, pointRadius: chartData.daily.values.length > 60 ? 0 : 3 }]
+    },
+    options: {
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: moneyTooltip },
+      scales: { y: moneyAxis, x: { grid: { display: false }, ticks: { maxTicksLimit: 10 } } }
+    }
+  });
+
+  // ---- hari dalam seminggu ----
+  const wdMax = Math.max(...chartData.weekday.values);
+  new Chart(document.getElementById('chartWeekday'), {
+    type: 'bar',
+    data: {
+      labels: chartData.weekday.labels,
+      datasets: [{ data: chartData.weekday.values, borderRadius: 6,
+                   backgroundColor: chartData.weekday.values.map(v => v === wdMax ? '#f59e0b' : '#fde68a') }]
+    },
+    options: {
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: moneyTooltip },
+      scales: { y: moneyAxis, x: { grid: { display: false } } }
+    }
+  });
+
+  // ---- item teratas ----
+  new Chart(document.getElementById('chartItems'), {
+    type: 'bar',
+    data: {
+      labels: chartData.top_items.labels,
+      datasets: [{ data: chartData.top_items.values, backgroundColor: '#10b981', borderRadius: 6 }]
+    },
+    options: {
+      indexAxis: 'y', maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: moneyTooltip },
+      scales: { x: moneyAxis, y: { grid: { display: false } } }
+    }
+  });
+
+  // ---- tabel data: cari, filter kategori, urut, halaman ----
+  const PAGE_SIZE = 15;
+  const state = { q: '', cat: '', key: 'd', dir: 'desc', page: 1 };
+  const tbody = document.getElementById('tbody');
+
+  function filtered() {
+    const q = state.q.trim().toLowerCase();
+    let list = rows.filter(r => (!state.cat || r.c === state.cat) && (!q || r.i.toLowerCase().includes(q)));
+    const k = state.key, sign = state.dir === 'asc' ? 1 : -1;
+    list.sort((a, b) => (a[k] < b[k] ? -1 : a[k] > b[k] ? 1 : 0) * sign);
+    return list;
+  }
+
+  function render() {
+    const list = filtered();
+    const pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+    state.page = Math.min(state.page, pages);
+    const start = (state.page - 1) * PAGE_SIZE;
+
+    tbody.innerHTML = list.slice(start, start + PAGE_SIZE).map(r => {
+      const [y, mo, d] = r.d.split('-');
+      return '<tr class="hover:bg-slate-50">'
+        + '<td class="px-4 py-2 whitespace-nowrap text-slate-500">' + d + '/' + mo + '/' + y + '</td>'
+        + '<td class="px-4 py-2">' + esc(r.i) + '</td>'
+        + '<td class="px-4 py-2"><span class="inline-flex items-center gap-1.5 text-xs">'
+        +   '<span class="w-2 h-2 rounded-full" style="background:' + (catColor[r.c] || '#94a3b8') + '"></span>' + esc(r.c) + '</span></td>'
+        + '<td class="px-4 py-2 text-right font-medium tabular-nums">' + fmtRp(r.a) + '</td>'
+        + '</tr>';
+    }).join('') || '<tr><td colspan="4" class="px-4 py-8 text-center text-slate-400">Tidak ada data yang cocok</td></tr>';
+
+    const sum = list.reduce((s, r) => s + r.a, 0);
+    document.getElementById('tableSummary').textContent = list.length + ' transaksi · total ' + fmtRp(sum);
+    document.getElementById('pageInfo').textContent = 'Hal. ' + state.page + ' / ' + pages;
+    document.getElementById('prev').disabled = state.page <= 1;
+    document.getElementById('next').disabled = state.page >= pages;
+
+    document.querySelectorAll('th.sortable').forEach(th => {
+      th.querySelector('.arrow').textContent = th.dataset.key === state.key ? (state.dir === 'asc' ? '▲' : '▼') : '';
+    });
+  }
+
+  document.getElementById('search').addEventListener('input', e => { state.q = e.target.value; state.page = 1; render(); });
+  document.getElementById('filterCat').addEventListener('change', e => { state.cat = e.target.value; state.page = 1; render(); });
+  document.getElementById('prev').onclick = () => { state.page--; render(); };
+  document.getElementById('next').onclick = () => { state.page++; render(); };
+  document.querySelectorAll('th.sortable').forEach(th => th.addEventListener('click', () => {
+    const k = th.dataset.key;
+    state.dir = (state.key === k && state.dir === 'desc') ? 'asc' : 'desc';
+    state.key = k; state.page = 1; render();
+  }));
+
+  render();
+})();
+</script>
+{% endif %}
+</body>
+</html>

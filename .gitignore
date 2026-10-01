@@ -1,0 +1,21 @@
+# Environment & rahasia
+.venv/
+.env
+
+# Data pribadi
+Dataset/
+Raw/
+insight_output/
+*.csv
+*.docx
+*.json
+
+# Django
+db.sqlite3
+db.sqlite3-journal
+__pycache__/
+*.pyc
+staticfiles/
+
+# Jupyter
+.ipynb_checkpoints/
